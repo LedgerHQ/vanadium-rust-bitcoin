@@ -39,7 +39,7 @@ use hashes::Hash;
 use internals::write_err;
 use secp256k1::{Secp256k1, Verification, XOnlyPublicKey};
 
-use crate::base58;
+use crate::{base58, witness};
 use crate::blockdata::constants::{
     MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
     SCRIPT_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_TEST,
@@ -100,6 +100,8 @@ pub enum Error {
         /// The address itself
         address: Address<NetworkUnchecked>,
     },
+    /// Error in Vanadium sdk.
+    Vanadium(vanadium_sdk::SdkError),
 }
 
 impl fmt::Display for Error {
@@ -122,7 +124,8 @@ impl fmt::Display for Error {
                 write!(f, "address ")?;
                 address.fmt_internal(f)?; // Using fmt_internal in order to remove the "Address<NetworkUnchecked>(..)" wrapper
                 write!(f, " belongs to network {} which is different from required {}", found, required)
-            }
+            },
+            Error::Vanadium(_) => write!(f, "error in vanadium sdk")
         }
     }
 }
@@ -146,7 +149,8 @@ impl std::error::Error for Error {
             | ExcessiveScriptSize
             | UnrecognizedScript
             | UnknownAddressType(_)
-            | NetworkValidation { .. } => None,
+            | NetworkValidation { .. }
+            | Vanadium(_) => None,
         }
     }
 }
@@ -582,27 +586,48 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
                 let mut prefixed = [0; 21];
                 prefixed[0] = self.p2pkh_prefix;
                 prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
+                let addr = vanadium_sdk::base58::encode_check(&prefixed).expect("Will never fail");
+
+                // base58::encode_check_to_fmt(fmt, &prefixed[..])
+                fmt.write_str(&addr)
             }
             Payload::ScriptHash(hash) => {
                 let mut prefixed = [0; 21];
                 prefixed[0] = self.p2sh_prefix;
                 prefixed[1..].copy_from_slice(&hash[..]);
-                base58::encode_check_to_fmt(fmt, &prefixed[..])
+                let addr = vanadium_sdk::base58::encode_check(&prefixed).expect("Will never fail");
+
+                // base58::encode_check_to_fmt(fmt, &prefixed[..])
+                fmt.write_str(&addr)
             }
             Payload::WitnessProgram(witness_prog) => {
                 let (version, prog) = (witness_prog.version(), witness_prog.program());
-                let mut upper_writer;
-                let writer = if fmt.alternate() {
-                    upper_writer = UpperWriter(fmt);
-                    &mut upper_writer as &mut dyn fmt::Write
+                // let mut upper_writer;
+                // let writer = if fmt.alternate() {
+                //     upper_writer = UpperWriter(fmt);
+                //     &mut upper_writer as &mut dyn fmt::Write
+                // } else {
+                //     fmt as &mut dyn fmt::Write
+                // };
+                // let mut bech32_writer =
+                //     bech32::Bech32Writer::new(self.bech32_hrp, version.bech32_variant(), writer)?;
+                // bech32::WriteBase32::write_u5(&mut bech32_writer, version.into())?;
+                // bech32::ToBase32::write_base32(&prog.as_bytes(), &mut bech32_writer)
+
+                let mut script_pub_key = Vec::new();
+                script_pub_key.reserve(2 + prog.len());
+                script_pub_key.push(if version == WitnessVersion::V0 { 0 } else {0x50 + version.to_num()});
+                script_pub_key.push(prog.len() as u8);
+                script_pub_key.extend_from_slice(prog.as_bytes());
+
+                let addr = vanadium_sdk::segwit_addr::segwit_addr_encode(&script_pub_key).expect("Will never fail");
+
+                if fmt.alternate() {
+                    let addr_uppercase = addr.to_uppercase();
+                    fmt.write_str(&addr_uppercase)
                 } else {
-                    fmt as &mut dyn fmt::Write
-                };
-                let mut bech32_writer =
-                    bech32::Bech32Writer::new(self.bech32_hrp, version.bech32_variant(), writer)?;
-                bech32::WriteBase32::write_u5(&mut bech32_writer, version.into())?;
-                bech32::ToBase32::write_base32(&prog.as_bytes(), &mut bech32_writer)
+                    fmt.write_str(&addr)
+                }
             }
         }
     }
