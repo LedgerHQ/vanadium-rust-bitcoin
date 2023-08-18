@@ -53,12 +53,18 @@ pub struct Header {
 
 impl_consensus_encoding!(Header, version, prev_blockhash, merkle_root, time, bits, nonce);
 
+fn vnd_sha256d(data: &[u8]) -> [u8; 32] {
+    let sha = vanadium_sdk::crypto::CtxSha256::new().update(data).r#final();
+    vanadium_sdk::crypto::CtxSha256::new().update(&sha).r#final()
+}
+
 impl Header {
     /// Returns the block hash.
     pub fn block_hash(&self) -> BlockHash {
-        let mut engine = BlockHash::engine();
-        self.consensus_encode(&mut engine).expect("engines don't error");
-        BlockHash::from_engine(engine)
+        let mut serialized: Vec<u8> = Vec::with_capacity(80);
+        self.consensus_encode(&mut serialized).expect("This should never fail");
+
+        BlockHash::from_byte_array(vnd_sha256d(&serialized))
     }
 
     /// Computes the target (range [0, T] inclusive) that a blockhash must land in to be valid.
