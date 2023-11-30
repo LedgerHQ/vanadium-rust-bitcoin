@@ -61,6 +61,10 @@ const PSBT_IN_TAP_BIP32_DERIVATION: u8 = 0x16;
 const PSBT_IN_TAP_INTERNAL_KEY: u8 = 0x17;
 /// Type: Taproot Merkle Root PSBT_IN_TAP_MERKLE_ROOT = 0x18
 const PSBT_IN_TAP_MERKLE_ROOT: u8 = 0x18;
+/// Type: Taproot Merkle Root PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS = 0x19
+const PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS: u8 = 0x19;
+/// Type: Taproot Merkle Root PSBT_IN_MUSIG2_PUB_NONCE = 0x1a
+const PSBT_IN_MUSIG2_PUB_NONCE: u8 = 0x1a;
 /// Type: Proprietary Use Type PSBT_IN_PROPRIETARY = 0xFC
 const PSBT_IN_PROPRIETARY: u8 = 0xFC;
 
@@ -126,6 +130,13 @@ pub struct Input {
     pub tap_internal_key: Option<XOnlyPublicKey>,
     /// Taproot Merkle root.
     pub tap_merkle_root: Option<TapNodeHash>,
+    /// MuSig2 participant pubkeys.
+    // TODO: Is there a type for a 33-byte compressed pubkey?
+    pub musig2_participant_pubkeys: BTreeMap<XOnlyPublicKey, Vec<secp256k1::PublicKey>>,
+    /// MuSig2 public nonces.
+    // TODO: this breaks with serde; also, we would want a type for the Pubnonce
+    pub musig2_pub_nonces: BTreeMap<(secp256k1::PublicKey, XOnlyPublicKey, Option<TapLeafHash>), Vec<u8>>,  // TODO: need more specific types, and the value should be 66 bytes instead of a Vec<u8> (how to make serde happy?)
+
     /// Proprietary key-value pairs for this input.
     #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq_byte_values"))]
     pub proprietary: BTreeMap<raw::ProprietaryKey, Vec<u8>>,
@@ -353,6 +364,16 @@ impl Input {
                     self.tap_merkle_root <= <raw_key: _>|< raw_value: TapNodeHash>
                 }
             }
+            PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS => {
+                impl_psbt_insert_pair! {
+                    self.musig2_participant_pubkeys <= <raw_key: XOnlyPublicKey>|< raw_value: Vec<secp256k1::PublicKey>>
+                }
+            }
+            PSBT_IN_MUSIG2_PUB_NONCE => {
+                impl_psbt_insert_pair! {
+                    self.musig2_pub_nonces <= <raw_key: (secp256k1::PublicKey, XOnlyPublicKey, Option<TapLeafHash>)>|< raw_value: Vec<u8>>
+                }
+            }
             PSBT_IN_PROPRIETARY => {
                 let key = raw::ProprietaryKey::try_from(raw_key.clone())?;
                 match self.proprietary.entry(key) {
@@ -391,6 +412,9 @@ impl Input {
         self.tap_script_sigs.extend(other.tap_script_sigs);
         self.tap_scripts.extend(other.tap_scripts);
         self.tap_key_origins.extend(other.tap_key_origins);
+        self.musig2_participant_pubkeys.extend(other.musig2_participant_pubkeys);
+        self.musig2_pub_nonces.extend(other.musig2_pub_nonces);
+
         self.proprietary.extend(other.proprietary);
         self.unknown.extend(other.unknown);
 
@@ -483,6 +507,15 @@ impl Map for Input {
         impl_psbt_get_pair! {
             rv.push(self.tap_merkle_root, PSBT_IN_TAP_MERKLE_ROOT)
         }
+
+        impl_psbt_get_pair! {
+            rv.push_map(self.musig2_participant_pubkeys, PSBT_IN_MUSIG2_PARTICIPANT_PUBKEYS)
+        }
+
+        impl_psbt_get_pair! {
+            rv.push_map(self.musig2_pub_nonces, PSBT_IN_MUSIG2_PUB_NONCE)
+        }
+
         for (key, value) in self.proprietary.iter() {
             rv.push(raw::Pair { key: key.to_key(), value: value.clone() });
         }
