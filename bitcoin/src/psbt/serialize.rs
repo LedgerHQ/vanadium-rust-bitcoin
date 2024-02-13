@@ -381,6 +381,69 @@ impl Deserialize for TapTree {
     }
 }
 
+
+// Musig2 related ser/deser
+
+impl Serialize for Vec<secp256k1::PublicKey> {
+    fn serialize(&self) -> Vec<u8> {
+        let mut serialized = Vec::new();
+        for key in self {
+            serialized.extend(key.serialize());
+        }
+        serialized
+    }
+}
+
+impl Deserialize for Vec<secp256k1::PublicKey> {
+    fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
+        let mut keys = Vec::new();
+        let mut position = 0;
+        while position < bytes.len() {
+            if bytes.len() < 33 {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+            }
+
+            let key = secp256k1::PublicKey::from_slice(&bytes[position..position + 33])
+                .map_err(Error::InvalidSecp256k1PublicKey)?;
+            keys.push(key);
+            position += 33;
+        }
+        Ok(keys)
+    }
+}
+
+impl Serialize for (secp256k1::PublicKey, secp256k1::XOnlyPublicKey, Option<TapLeafHash>) {
+    fn serialize(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend(self.0.serialize());
+        buf.extend(self.1.serialize());
+        if let Some(tap_leaf_hash) = &self.2 {
+            buf.extend(tap_leaf_hash.serialize());
+        }
+        buf
+    }
+}
+
+impl Deserialize for (secp256k1::PublicKey, secp256k1::XOnlyPublicKey, Option<TapLeafHash>) {
+    fn deserialize(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() != 33 + 32 && bytes.len() != 33 + 32 + 32 {
+            return Err(io::Error::from(io::ErrorKind::InvalidData).into());
+        }
+
+        let pub_key = secp256k1::PublicKey::deserialize(&bytes[0..33])?;
+        let x_only_pub_key = secp256k1::XOnlyPublicKey::deserialize(&bytes[33..33+32])?;
+
+        let tap_leaf_hash = if bytes.len() == 33 + 32 + 32 {
+            Some(TapLeafHash::deserialize(&bytes[33+32..])?)
+        } else {
+            None
+        };
+
+        Ok((pub_key, x_only_pub_key, tap_leaf_hash))
+    }
+}
+
+
 // Helper function to compute key source len
 fn key_source_len(key_source: &KeySource) -> usize { 4 + 4 * (key_source.1).as_ref().len() }
 
